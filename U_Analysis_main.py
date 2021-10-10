@@ -320,55 +320,6 @@ m_a = 28.9644e-3        # Mean molar mass of air(kg/mol)
 Rstar_a = 8.31432       # Universal gas constant for air (N m /(mol K))
 
 
-precip_type_dict = {
-    'C': 'No Precip',
-    'Kein Niederschlag': 'No Precip',
-    'A': 'Hail',
-    'L': 'Drizzle',
-    'L+': 'heavy Drizzle',
-    'L-': 'light Drizzle',
-    'R': 'Rain',
-    'R+': 'heavy Rain',
-    'R-': 'light Rain',
-    'RL': 'Drizzle and Rain',
-    'RL+': 'heavy Drizzle and Rain',
-    'RL-': 'light Drizzle and Rain',
-    'RLS': 'Rain, Drizzle and Snow',
-    'RLS+': 'heavy Rain, Drizzle and Snow',
-    'RLS-': 'light Rain, Drizzle and Snow',
-    'S': 'Snow',
-    'S+': 'heavy Snow',
-    'S-': 'light Snow',
-    'SG': 'Snow Grains',
-    'SP': 'Freezing Rain'
-}
-rain_list = [
-    'L',
-    'L+',
-    'L-',
-    'R' ,
-    'R+',
-    'R-',
-    'RL',
-    'RL+',
-    'RL-'
-]
-SLW_list = ['SP']
-mix_list = [
-    'RLS',
-    'RLS+',
-    'RLS-'
-]
-snow_list = [
-    'S',
-    'S+',
-    'S-',
-]
-hail_list = [
-    'A',
-    'SG'
-]
-
 
 # Misc
 def read_email_subjects_from_gmail(FROM_EMAIL, FROM_PWD, emails_to_be_read=6):
@@ -4424,6 +4375,30 @@ def era5_get_surface_interpolated_vars(era5_file_levels_ncFile, era5_file_surfac
 
 
 # particle trajectory
+def trajectory_lat_lon_to_mean_altitude_2D(traj_lat_array, traj_lon_array, traj_alt_array,
+                                           lat_min, lat_max, lat_bin_number,
+                                           lon_min, lon_max, lon_bin_number,
+                                           return_bin_centers=False):
+
+
+    range_ = [[lon_min, lon_max], [lat_min, lat_max]]
+    bins_ = [lon_bin_number, lat_bin_number]
+    hist_counts,lon_edges,lat_edges = np.histogram2d(traj_lon_array, traj_lat_array, bins=bins_ ,range=range_)
+    hist_alt_sum,lon_edges,lat_edges = np.histogram2d(traj_lon_array, traj_lat_array, bins=bins_ ,range=range_,
+                                                      weights=traj_alt_array)
+
+    hist_alt = hist_alt_sum / hist_counts
+
+    hist_alt[hist_counts == 0] = np.nan
+
+    hist_alt = hist_alt.T
+
+    if return_bin_centers:
+        lon_centers = lon_edges[:-1] + np.diff(lon_edges)/2
+        lat_centers = lat_edges[:-1] + np.diff(lat_edges)/2
+        return hist_alt, lon_centers, lat_centers
+    else:
+        return hist_alt
 def trajectory_lat_lon_to_frequency_2D(traj_lat_array, traj_lon_array,
                                         lat_min, lat_max, lat_bin_number,
                                         lon_min, lon_max, lon_bin_number,
@@ -4434,7 +4409,7 @@ def trajectory_lat_lon_to_frequency_2D(traj_lat_array, traj_lon_array,
     bins_ = [lon_bin_number, lat_bin_number]
     hist_counts,lon_edges,lat_edges = np.histogram2d(traj_lon_array, traj_lat_array, bins=bins_ ,range=range_)
 
-    hist_bool = np.array([hist_counts>0])[0,:,:]
+    hist_bool = np.array([hist_counts>0])[0,:,:].T
 
     if return_bin_centers:
         lon_centers = lon_edges[:-1] + np.diff(lon_edges)/2
@@ -4490,13 +4465,13 @@ def hysplit_traj_filename_list_to_frequency_array(list_of_trajectory_filenames, 
 def trajectory_filename_list_to_frequency_array(list_of_trajectory_filenames,
                                                 lat_min, lat_max, lat_bin_number,
                                                 lon_min, lon_max, lon_bin_number,
-                                                lat_column = 1, lon_column = 2 ):
+                                                lat_column = 1, lon_column = 2 , lat_offset=0, lon_offset=0):
 
     trajec_array = np.load(list_of_trajectory_filenames[0])
 
     # load first to get shape and centers
-    hist_bool, lon_centers, lat_centers = trajectory_lat_lon_to_frequency_2D(trajec_array[:,lat_column],
-                                                                             trajec_array[:,lon_column],
+    hist_bool, lon_centers, lat_centers = trajectory_lat_lon_to_frequency_2D(trajec_array[:,lat_column]-lat_offset,
+                                                                             trajec_array[:,lon_column]-lon_offset,
                                                                              lat_min, lat_max, lat_bin_number,
                                                                              lon_min, lon_max, lon_bin_number,
                                                                              return_bin_centers=True)
@@ -4504,13 +4479,43 @@ def trajectory_filename_list_to_frequency_array(list_of_trajectory_filenames,
     frequency_array_final = np.zeros(hist_bool.shape, dtype=float)
     for trajec_filename in list_of_trajectory_filenames:
         trajec_array = np.load(trajec_filename)
-        frequency_array_final += trajectory_lat_lon_to_frequency_2D(trajec_array[:, lat_column],
-                                                                    trajec_array[:, lon_column],
+        frequency_array_final += trajectory_lat_lon_to_frequency_2D(trajec_array[:, lat_column]-lat_offset,
+                                                                    trajec_array[:, lon_column]-lon_offset,
                                                                     lat_min, lat_max, lat_bin_number,
                                                                     lon_min, lon_max, lon_bin_number,
                                                                     return_bin_centers=False)
 
     return frequency_array_final.T, lat_centers, lon_centers
+def trajectory_filename_list_to_3D_altitude_array(list_of_trajectory_filenames,
+                                                  lat_min, lat_max, lat_bin_number,
+                                                  lon_min, lon_max, lon_bin_number,
+                                                  lat_column = 1, lon_column = 2, alt_column = 3,
+                                                  lat_offset = 0, lon_offset = 0):
+
+    trajec_array = np.load(list_of_trajectory_filenames[0])
+
+    # load first to get shape and centers
+    hist_bool, lon_centers, lat_centers = trajectory_lat_lon_to_mean_altitude_2D(trajec_array[:,lat_column]-lat_offset,
+                                                                                 trajec_array[:,lon_column]-lon_offset,
+                                                                                 trajec_array[:,alt_column],
+                                                                                 lat_min, lat_max, lat_bin_number,
+                                                                                 lon_min, lon_max, lon_bin_number,
+                                                                                 return_bin_centers=True)
+
+    frequency_array_final = np.zeros((len(list_of_trajectory_filenames),hist_bool.shape[0],hist_bool.shape[1]),
+                                     dtype=float)
+    for i_, trajec_filename in enumerate(list_of_trajectory_filenames):
+        trajec_array = np.load(trajec_filename)
+        frequency_array_final[i_,:,:] = trajectory_lat_lon_to_mean_altitude_2D(trajec_array[:,lat_column]-lat_offset,
+                                                                               trajec_array[:,lon_column]-lon_offset,
+                                                                               trajec_array[:,alt_column],
+                                                                               lat_min, lat_max, lat_bin_number,
+                                                                               lon_min, lon_max, lon_bin_number,
+                                                                               return_bin_centers=False)
+
+    return frequency_array_final, lat_centers, lon_centers
+
+
 # HYSPLIT
 def hysplit_load_freq_endpoints(filename_, number_of_hours):
 
@@ -7233,6 +7238,217 @@ def MRR_PRO_process_add_Ze_to_IMProToo_4_V6(filename_postprocessed_V4, offset_co
 
 
     save_dictionary_to_netcdf(dict_, output_filename, print_debug=False)
+def MRR_PRO_process_IMProToo_7(filename_netcdf_MRR_Pro, output_filename,
+                               mask_filename='D:/Data/MRR_CM/MRR_PRO_spectra_mask_latest.npy'):
+    file_CM = nc.Dataset(filename_netcdf_MRR_Pro)
+
+    MRR_CM_time = np.array(file_CM.variables['time'][:])
+
+    # define start and end rows according to time_interval
+    e1_1 = 0
+    e1_2 = MRR_CM_time.shape[0]
+
+    # create mask
+    mask_ = np.load(mask_filename)
+    mask_[mask_ == 1] = np.nan
+    mask_[mask_ == 0] = 1
+    mask_3D = np.zeros((file_CM.variables['spectrum_raw'][e1_1:e1_2].data.shape), dtype=float)
+    mask_3D[:] = mask_
+
+    # mask spectra
+    spectrum_reflectivity_array = np.array(file_CM.variables['spectrum_raw'][e1_1:e1_2])
+    spectrum_reflectivity_array_masked = spectrum_reflectivity_array * mask_3D
+
+    # interpolate the interference in the spectrum
+    for t_ in range(e1_2):
+        p_progress(t_, e1_2, extra_text='spectrum interpolated')
+        spectrum_reflectivity_array[t_, :, :] = \
+            array_2d_fill_gaps_by_interpolation_linear(spectrum_reflectivity_array_masked[t_, :, :])
+
+    # get constants
+    range_array = file_CM.variables['range'][:].data
+    delta_H = np.median(np.diff(range_array))
+    calibration_constant = int(file_CM.variables['calibration_constant'][0])  # * .015)
+    tranfer_function = file_CM.variables['transfer_function'][:].data
+
+    # convert x to s
+    s_array = np.array(10 ** (spectrum_reflectivity_array / 10), dtype=int)
+
+
+    # add attributes
+    file_CM_object = Object_create()
+    file_CM_object.header = file_CM.instrument_name
+    file_CM_object.missingNumber = -9999
+    file_CM_object.mrrRawCC = calibration_constant
+
+    rh_array = np.zeros((e1_2, tranfer_function.shape[0]))
+    rh_array = np.ma.array(rh_array, mask=np.zeros(rh_array.shape))
+    for t_ in range(e1_2):
+        rh_array[t_, :] = range_array
+    file_CM_object.mrrRawHeight = rh_array
+    file_CM_object.mrrRawNoSpec = np.ones(e1_2) * 5.7
+    mrrRawSpectrum_array = np.ma.array(s_array, mask=np.zeros(s_array.shape))
+    file_CM_object.mrrRawSpectrum = mrrRawSpectrum_array
+
+    tf_array = np.zeros((e1_2, tranfer_function.shape[0]))
+    tf_array = np.ma.array(tf_array, mask=np.zeros((tf_array.shape)))
+    for t_ in range(e1_2):
+        tf_array[t_, :] = tranfer_function
+    file_CM_object.mrrRawTF = tf_array
+    file_CM_object.mrrRawTime = file_CM.variables['time'][e1_1:e1_2]
+    file_CM_object.shape2D = tuple((e1_2, file_CM.variables['range'].shape[0]))
+    file_CM_object.shape3D = file_CM.variables['spectrum_raw'].shape
+
+    processedSpec_Pro = IMProToo_mod.MrrZe(file_CM_object)
+    # processedSpec_CM.co["mrrFrequency"] = lamb_ # 24.15e9  24.23e9 #in Hz,]
+    print('converted raw to mrrZe')
+    processedSpec_Pro.averageSpectra(60)
+    print('averaged')
+    processedSpec_Pro.rawToSnow()
+    print('calculated moments')
+
+    # get data and correct
+    dict_ = {}
+    dict_['variables'] = {}
+    dict_['dimensions'] = ('time', 'range', 'doppler_velocity')
+
+    attribute_list = [
+        ('author', 'Luis Ackermann'),
+        ('author email', 'ackermannluis@gmail.com'),
+        ('version', '4'),
+        ('time of file creation', time_seconds_to_str(time.time(), '%Y-%m-%d_%H:%M UTC')),
+    ]
+    dict_['attributes'] = attribute_list
+
+
+    # time
+    dict_['variables']['time'] = {}
+    dict_['variables']['time']['dimensions'] = ('time',)
+    dict_['variables']['time']['attributes'] = [
+        ('units', 'seconds since 1970-01-01_00:00:00'),
+        ('description', 'time stamp is at beginning of average period')]
+    dict_['variables']['time']['data'] = np.array(processedSpec_Pro.time[:].data) \
+                            - 60 # the subtraction is such that time stamp is at beginning of average period
+
+    # range
+    dict_['variables']['range'] = {}
+    dict_['variables']['range']['dimensions'] = ('range',)
+    dict_['variables']['range']['attributes'] = [
+        ('units', 'm'),
+        ('description', 'height of sample in meters above instrument')]
+    dict_['variables']['range']['data'] = processedSpec_Pro.H.data[0,:]
+
+    # doppler_velocity
+    dict_['variables']['doppler_velocity'] = {}
+    dict_['variables']['doppler_velocity']['dimensions'] = ('doppler_velocity',)
+    dict_['variables']['doppler_velocity']['attributes'] = [
+        ('units', 'm/s'),
+        ('description', 'fall speed of expanded spectra, positive is towards instrument')]
+    dict_['variables']['doppler_velocity']['data'] = processedSpec_Pro.specVel
+
+    # Ze_uncorrected
+    dict_['variables']['Ze_uncorrected'] = {}
+    dict_['variables']['Ze_uncorrected']['dimensions'] = ('time', 'range',)
+    dict_['variables']['Ze_uncorrected']['attributes'] = [
+        ('units', 'dB'),
+        ('description', 'computed by ImProToo_mod from linearized MRR-Pro spectrum_reflectivity'),
+        ('long_name', 'effective reflectivity uncorrected'),
+        ('note', 'linearized => 10**(spectrum_reflectivity/10), has not been offset corrected')]
+    Ze_imp = np.array(processedSpec_Pro.Ze[:, :].data)
+    Ze_imp[Ze_imp == -9999] = np.nan
+    dict_['variables']['Ze_uncorrected']['data'] = Ze_imp
+
+    # W
+    dict_['variables']['W'] = {}
+    dict_['variables']['W']['dimensions'] = ('time', 'range',)
+    dict_['variables']['W']['attributes'] = [
+        ('units', 'm/s'),
+        ('description', 'positive is towards the instrument'),
+        ('long_name', 'particle fall speed')]
+    W_imp = np.array(processedSpec_Pro.W[:, :].data)
+    W_imp[W_imp == -9999] = np.nan
+    W_imp[W_imp < -6] = np.nan
+    W_imp[W_imp > 12] = np.nan
+    dict_['variables']['W']['data'] = W_imp
+
+    # Ze_metek
+    dict_['variables']['Ze_metek'] = {}
+    dict_['variables']['Ze_metek']['dimensions'] = ('time', 'range',)
+    dict_['variables']['Ze_metek']['attributes'] = [
+        ('units', 'dB'),
+        ('description', 'computed by Metek original software in MRR-Pro'),
+        ('long_name', 'effective reflectivity from Metek'),
+        ('note', 'assumes all particles are liquid and spherical, clutter masked using Impros Ze')]
+    Ze_imp_mask = np.array(Ze_imp)
+    Ze_imp_mask[~np.isnan(Ze_imp_mask)] = 1
+    Ze_metek = file_CM.variables['Ze'][:, 1:].filled(np.nan)
+    # Ze_metek_1mMean = row_average_discrete_2D(Ze_metek, 6)
+    MRR_CM_time_1mMean, Ze_metek_1mMean = mean_discrete(MRR_CM_time, Ze_metek, 60,
+                                                        dict_['variables']['time']['data'][0],
+                                                        last_index=dict_['variables']['time']['data'][-1])
+    Ze_metek_1mMean_mskd = Ze_metek_1mMean * Ze_imp_mask
+    dict_['variables']['Ze_metek']['data'] = Ze_metek_1mMean_mskd
+
+    # melted mask
+    dict_['variables']['melted_mask'] = {}
+    dict_['variables']['melted_mask']['dimensions'] = ('time', 'range',)
+    dict_['variables']['melted_mask']['attributes'] = [
+        ('description', 'computed by Metek original software in MRR-Pro, modified to include samples below ML'),
+        ('long_name', 'bins below the melted layer computed by Metek, 1 = melted, nan = might be not melted')]
+    ML_array = file_CM.variables['ML'][e1_1:e1_2,1:].filled(np.nan)
+    ML_array[ML_array > 0.5] = 1
+    # extend ML to surface
+    for t_ in range(e1_2):
+        if np.sum(ML_array[t_, :]) > 0:
+            temp_c_index = np.arange(ML_array.shape[1]) * ML_array[t_, :]
+            heights_ML = np.argmax(temp_c_index)
+            ML_array[t_, :heights_ML] = 1
+    # ML_array_1mMean = row_average_discrete_2D(ML_array, 6)
+    MRR_CM_time_1mMean, ML_array_1mMean  = mean_discrete(MRR_CM_time, ML_array, 60,
+                                                         dict_['variables']['time']['data'][0],
+                                                         last_index=dict_['variables']['time']['data'][-1])
+    ML_array_1mMean[ML_array_1mMean < 1] = 0
+    ML_Mask = np.array(ML_array_1mMean)
+    ML_Mask[ML_Mask == 0] = np.nan
+    dict_['variables']['melted_mask']['data'] = ML_Mask
+
+    # eta
+    dict_['variables']['eta'] = {}
+    dict_['variables']['eta']['dimensions'] = ('time', 'range','doppler_velocity',)
+    dict_['variables']['eta']['attributes'] = [
+        ('description', 'computed by ImProToo_mod from linearized MRR-Pro spectrum_reflectivity'),
+        ('long_name', 'expanded reflectivity spectrum'),
+        ('note', 'has not been offset corrected or linearized')]
+    dict_['variables']['eta']['data'] = processedSpec_Pro.eta[:,:]
+
+    # skewness
+    dict_['variables']['skewness'] = {}
+    dict_['variables']['skewness']['dimensions'] = ('time', 'range',)
+    dict_['variables']['skewness']['attributes'] = [
+        ('description', 'computed by ImProToo_mod from linearized MRR-Pro spectrum_reflectivity'),
+        ('long_name', 'skewness of predominant peak')]
+    dict_['variables']['skewness']['data'] = processedSpec_Pro.skewness[:,:]
+
+    # kurtosis
+    dict_['variables']['kurtosis'] = {}
+    dict_['variables']['kurtosis']['dimensions'] = ('time', 'range',)
+    dict_['variables']['kurtosis']['attributes'] = [
+        ('description', 'computed by ImProToo_mod from linearized MRR-Pro spectrum_reflectivity'),
+        ('long_name', 'kurtosis of predominant peak')]
+    dict_['variables']['kurtosis']['data'] = processedSpec_Pro.kurtosis[:,:]
+
+    # specWidth
+    dict_['variables']['specWidth'] = {}
+    dict_['variables']['specWidth']['dimensions'] = ('time', 'range',)
+    dict_['variables']['specWidth']['attributes'] = [
+        ('description', 'computed by ImProToo_mod from linearized MRR-Pro spectrum_reflectivity'),
+        ('long_name', 'specWidth of predominant peak')]
+    dict_['variables']['specWidth']['data'] = processedSpec_Pro.specWidth[:,:]
+
+
+    save_dictionary_to_netcdf(dict_, output_filename)
+
+    file_CM.close()
 
 
 
@@ -7478,7 +7694,7 @@ def CFAD(Y_array, x_values_array, bins_tuple_y_x=(12, np.arange(-10, 40, 2)), no
          x_header='', y_header='', custom_y_range_tuple=None, custom_x_range_tuple=None, figure_filename=None,
          cbar_label='', cmap_=default_cm, figsize_ = (10 ,6), title_str = '', contourF_=True, cbar_format='%.2f',
          vmin_=None ,vmax_=None, grid_=True, fig_ax=None, show_cbar=True, level_threshold_perc=10,
-         invert_y=False, levels=None ,custom_ticks_x=None, custom_ticks_y=None, cbar_ax=None,
+         invert_y=False, levels=None ,custom_ticks_x=None, custom_ticks_y=None, cbar_ax=None, cbar_orient='vertical',
          font_size_axes_labels=14, font_size_title=16, font_size_ticks=10, extend_='neither'):
     """
     creates a figure with a countour frequency by altitude diagram.
@@ -7516,6 +7732,7 @@ def CFAD(Y_array, x_values_array, bins_tuple_y_x=(12, np.arange(-10, 40, 2)), no
     :param custom_ticks_y: list/array with the ticks for the y axes
     :param cbar_ax: axes object from matplotlib where the colorbar will be placed, usefull when multiple CFADs are in
                     the same figure and share one colorbar.
+    :param cbar_orient: 'vertical' or 'horizontal'
     :param font_size_axes_labels: size of font of axes labels in graph
     :param font_size_title: size of font of title in graph
     :param font_size_ticks: size of font of ticks in graph
@@ -7579,7 +7796,7 @@ def CFAD(Y_array, x_values_array, bins_tuple_y_x=(12, np.arange(-10, 40, 2)), no
                                 figure_filename=figure_filename, fig_ax=fig_ax ,show_cbar=show_cbar, invert_y=invert_y,
                                 custom_ticks_x=custom_ticks_x, custom_ticks_y=custom_ticks_y ,cbar_format=cbar_format,
                                 font_size_axes_labels=font_size_axes_labels, font_size_title=font_size_title,
-                                font_size_ticks=font_size_ticks, extend_=extend_)
+                                font_size_ticks=font_size_ticks, extend_=extend_, cbar_orient=cbar_orient)
     return fig_ax, hist_array.T, hist_c[:-1], hist_r[:-1]
 
 
@@ -8167,57 +8384,33 @@ def parsivel_plot_spectrum_DSD(arr_, title_='', x_range_tuple=(0, 6), y_range_tu
         fig.savefig(save_filename, transparent=True, bbox_inches='tight')
         plt.close(fig)
     return fig, ax
-def parsivel_calculate_percentage_precip_type(rain_rate_array, weather_code_NWS_array, fig_ax=None,
+def parsivel_calculate_percentage_precip_type(rain_rate_array, precipitation_type_number, fig_ax=None,
                                               y_header='Total contribution [%]',
                                               figure_filename=None, show_figure=True, figsize_=(5,3),
-                                              labels_=('Rain', 'Freezing\nRain', 'Mix', 'Snow', 'Hail or\nGraupel')):
+                                              labels_=('Rain', 'SLW', 'Mixed', 'Snow')):
     # calculate percentage of precip type
-    precip_subset_sums_list = np.zeros(5)  # rain, SLW, mix, snow, hail
+    precip_subset_sums_list = np.zeros(4)  # rain, SLW, mix, frozen
 
-    if weather_code_NWS_array.dtype == 'float' or weather_code_NWS_array.dtype == 'int':
-        for r_ in range(rain_rate_array.shape[0]):
-            if rain_rate_array[r_] == 0:
+    RR_, Ty_ = coincidence(rain_rate_array, precipitation_type_number)
+
+    for r_ in range(RR_.shape[0]):
+        if RR_[r_] == 0:
+            continue
+        else:
+            if Ty_[r_] == 1:
+                precip_subset_sums_list[0] += RR_[r_]
+                continue
+            elif Ty_[r_] == 2:
+                precip_subset_sums_list[1] += RR_[r_]
+                continue
+            elif Ty_[r_] == 3:
+                precip_subset_sums_list[2] += RR_[r_]
+                continue
+            elif Ty_[r_] == 4:
+                precip_subset_sums_list[3] += RR_[r_]
                 continue
             else:
-                if weather_code_NWS_array[r_] == 1:
-                    precip_subset_sums_list[0] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] == 2:
-                    precip_subset_sums_list[1] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] == 3:
-                    precip_subset_sums_list[2] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] == 4:
-                    precip_subset_sums_list[3] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] == 5:
-                    precip_subset_sums_list[4] += rain_rate_array[r_]
-                    continue
-                else:
-                    precip_subset_sums_list[2] += rain_rate_array[r_]
-    else:
-        for r_ in range(rain_rate_array.shape[0]):
-            if rain_rate_array[r_] == 0:
-                continue
-            else:
-                if weather_code_NWS_array[r_] in rain_list:
-                    precip_subset_sums_list[0] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] in SLW_list:
-                    precip_subset_sums_list[1] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] in mix_list:
-                    precip_subset_sums_list[2] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] in snow_list:
-                    precip_subset_sums_list[3] += rain_rate_array[r_]
-                    continue
-                elif weather_code_NWS_array[r_] in hail_list:
-                    precip_subset_sums_list[4] += rain_rate_array[r_]
-                    continue
-                else:
-                    precip_subset_sums_list[2] += rain_rate_array[r_]
+                precip_subset_sums_list[2] += rain_rate_array[r_]
 
     precip_type_percent_array = 100 * precip_subset_sums_list / np.nansum(precip_subset_sums_list)
 
@@ -8226,7 +8419,7 @@ def parsivel_calculate_percentage_precip_type(rain_rate_array, weather_code_NWS_
             fig, ax = fig_ax
         else:
             fig, ax = plt.subplots(figsize=figsize_)
-        ax.bar(np.arange(5), precip_type_percent_array, color=['red', 'green', 'yellow', 'blue', 'black'],
+        ax.bar(np.arange(4), precip_type_percent_array, color=['red', 'green', 'yellow', 'blue'],
                tick_label=labels_, align='center')
 
         if y_header is not None: ax.set_ylabel(y_header)
@@ -8240,6 +8433,7 @@ def parsivel_calculate_percentage_precip_type(rain_rate_array, weather_code_NWS_
     return precip_type_percent_array, precip_subset_sums_list
 def parsivel_convert_NWS_code_to_numbers(precipitation_rate_array, weather_code_NWS_array):
     """
+    SHOULD NOT BE USED, ERROR FOUND, USE parsivel_convert_METAR_code_to_numbers INSTEAD
     creates an array with a phase number by grouping similar NWS flags into broad classes
     (0=no precip, 1=rain, 2=freezing rain, 3=mix, 4=snow, 5=hail or graupel)
     :param precipitation_rate_array: 1d array with precipitation rate data (mm/hr)
@@ -8294,6 +8488,7 @@ def parsivel_convert_NWS_code_to_numbers(precipitation_rate_array, weather_code_
         'A',
         'SG'
     ]
+    print('SHOULD NOT BE USED, ERROR FOUND, USE parsivel_convert_METAR_code_to_numbers INSTEAD')
     precip_type_array = np.zeros(precipitation_rate_array.shape[0], dtype=int)  # rain, SLW, mix, snow, hail
     for r_ in range(precipitation_rate_array.shape[0]):
         if precipitation_rate_array[r_] == 0:
@@ -10048,6 +10243,128 @@ def statistical_tables(filename_, parameter_list):
     header_list = ['parameter', 'mean', 'median', '25 percentile', '75 percentile', 'maximum', 'minimum', 'stdv', '% capture rate']
     output_filename = filename_.split('.')[0] + 'stats_table.csv'
     save_simple_array_to_disk(header_list, result_array, output_filename)
+def get_point_x_y_from_start_angle_distance(point_x_y_tuple, angle_, distance):
+    """
+    finds the point that is distance away from the point_x_y_tuple location in angle_ direction
+    :param point_x_y_tuple: tuple or list or array with two elements, elements can be floats
+    :param angle_: in degrees from the positive x direction counterclockwise
+    :param distance: scalar in the same units as x and y
+    :return: tuple with x and y location of result point
+    """
+    angle_rad = np.pi * angle_ / 180
+    x_delta = distance * np.cos(angle_rad)
+    y_delta = distance * np.sin(angle_rad)
+    return point_x_y_tuple[0] + x_delta, point_x_y_tuple[1] + y_delta
+def create_line_x_y_series_from_start_point_and_angle(start_point_x_y, angle_deg, length_, line_resolution):
+    # define stop point
+    stop_point_x_y = get_point_x_y_from_start_angle_distance(start_point_x_y, angle_deg, length_)
+
+    # create line
+    line_x = np.linspace(start_point_x_y[0],stop_point_x_y[0],line_resolution)
+    line_y = np.linspace(start_point_x_y[1],stop_point_x_y[1],line_resolution)
+
+    return line_x, line_y
+def create_rectangular_mask_from_array_start_point_angle(array_, start_point_x_y, angle_deg, length_, width_,
+                                                         array_x_min, array_x_max, array_y_min, array_y_max,
+                                                         ):
+    line_resolution = np.max(array_.shape)
+    x_bin_number = array_.shape[1]
+    y_bin_number = array_.shape[0]
+
+    line_to_first_corner_x_y = create_line_x_y_series_from_start_point_and_angle(start_point_x_y,
+                                                                                 angle_deg + 90, width_ / 2,
+                                                                                 int(line_resolution))
+
+    line_from_first_corner_to_second_corner_x_y = create_line_x_y_series_from_start_point_and_angle(
+        (line_to_first_corner_x_y[0][-1], line_to_first_corner_x_y[1][-1]),
+        angle_deg - 90, width_,
+        int(line_resolution * width_ / length_))
+
+    master_line_x_list = []
+    master_line_y_list = []
+    for i_ in range(len(line_from_first_corner_to_second_corner_x_y[0])):
+        start_x = line_from_first_corner_to_second_corner_x_y[0][i_]
+        start_y = line_from_first_corner_to_second_corner_x_y[1][i_]
+        line_temp_x_y = create_line_x_y_series_from_start_point_and_angle((start_x, start_y),
+                                                                          angle_deg, length_,
+                                                                          int(line_resolution))
+        for ii_ in range(len(line_temp_x_y[0])):
+            master_line_x_list.append(line_temp_x_y[0][ii_])
+            master_line_y_list.append(line_temp_x_y[1][ii_])
+
+
+    array_bool = trajectory_lat_lon_to_frequency_2D(np.array(master_line_y_list), np.array(master_line_x_list),
+                                                             array_y_min, array_y_max, y_bin_number,
+                                                             array_x_min, array_x_max, x_bin_number)
+
+
+    return array_bool
+def create_thick_cross_section_mean_std_series(array_values, array_x, array_y,
+                                               start_point_x_y, angle_deg, length_, width_):
+    # <editor-fold desc="reshape axis arrays to 2D if needed">
+    if len(array_x.shape) == 1:
+        array_x_reshaped = np.zeros(array_values.shape, dtype=float)
+        for r_ in range(array_values.shape[0]):
+            array_x_reshaped[r_, :] = array_x
+    else:
+        array_x_reshaped = array_x
+    array_x = array_x_reshaped
+
+    if len(array_y.shape) == 1:
+        array_y_reshaped = np.zeros(array_values.shape, dtype=float)
+        for c_ in range(array_values.shape[1]):
+            array_y_reshaped[:, c_] = array_y
+    else:
+        array_y_reshaped = array_y
+    array_y = array_y_reshaped
+    # </editor-fold>
+
+    ## define suitable resolution of transverse line cuts to minimize overlap but insure no skips
+
+    # define stop point
+    stop_point_x_y = get_point_x_y_from_start_angle_distance(start_point_x_y, angle_deg, length_)
+
+    # get grid spacing
+    d_x = np.nanmedian(np.diff(array_x, axis=1))
+    d_y = np.nanmedian(np.diff(array_y, axis=0))
+
+    # get number of grids between start point and end point
+    x_cells = np.ceil(np.abs((start_point_x_y[0] - stop_point_x_y[0]) / d_x))
+    y_cells = np.ceil(np.abs((start_point_x_y[1] - stop_point_x_y[1]) / d_y))
+    diagonal_cells = int(np.ceil((x_cells ** 2 + y_cells ** 2) ** 0.5))
+
+    # create line between start and end point
+    line_x_arr, line_y_arr = create_line_x_y_series_from_start_point_and_angle(start_point_x_y,
+                                                                               angle_deg, length_,
+                                                                               diagonal_cells)
+    # p_plot(line_x_arr, line_y_arr, S_=20, add_line=True, fig_ax=o_[:2])
+
+    # loop through each line point and create transverse lines, get bool array of cells touching lines, and store
+    cells_along_trans_lines_list = []
+    bool_list = []
+    for line_x, line_y in zip(line_x_arr, line_y_arr):
+        point_1_x_y = get_point_x_y_from_start_angle_distance((line_x, line_y), angle_deg + 90, width_ / 2)
+        line_2_x_y = create_line_x_y_series_from_start_point_and_angle(point_1_x_y, angle_deg - 90, width_,
+                                                                       diagonal_cells)
+
+        array_bool = trajectory_lat_lon_to_frequency_2D(line_2_x_y[1], line_2_x_y[0],
+                                                        np.nanmin(array_y) - d_y / 2,
+                                                        np.nanmax(array_y) + d_y / 2,
+                                                        array_values.shape[0],
+                                                        np.nanmin(array_x) - d_x / 2,
+                                                        np.nanmax(array_x) + d_x / 2,
+                                                        array_values.shape[1])
+        bool_list.append(array_bool)
+        cells_along_trans_lines_list.append(array_values[array_bool])
+
+    mean_list = []
+    std_list = []
+    for i_ in cells_along_trans_lines_list:
+        mean_list.append(np.nanmean(i_))
+        std_list.append(np.nanstd(i_))
+
+    return line_x_arr, line_y_arr, np.array(mean_list), np.array(std_list)
+
 
 
 
@@ -12317,7 +12634,8 @@ def p_plot(X_series, Y_,
            legend_show=False, legend_loc='upper left', marker_=None, marker_lw=0, rasterized_=False,
            font_size_axes_labels=14, font_size_title=16, font_size_legend=12, font_size_ticks=10, cbar_format='%.2f',
            t_line_text_color='black', vmin_=None, vmax_=None, y_ticks_on_right_side=False, cbar_orient='vertical',
-           colorbar_tick_labels_list=None, add_coastlines=False, coastline_color='black'):
+           colorbar_tick_labels_list=None, add_coastlines=False, coastline_color='black',
+           y_err_arr=None, y_err_color='k'):
     """
     creates plot
     :param X_series: 1D array with values of x axis
@@ -12383,6 +12701,8 @@ def p_plot(X_series, Y_,
     :param colorbar_tick_labels_list: if provided, it will be used as tickmars for the colorbar
     :param add_coastlines: if true, coastlines will be added using the local topographical files (global or access)
     :param coastline_color: color of the coastline, string
+    :param y_err_arr: 1D array with error values for errorbars. If not none, error bars will be added
+    :param y_err_color: color to be used for the error bars, default is black
     :return: matplotlib figure object, matplotlib axis object, R2 in case a fitting is done otherwise none
     """
     change_font_size_figures(font_size_axes_labels, font_size_title, font_size_legend, font_size_ticks)
@@ -12435,11 +12755,15 @@ def p_plot(X_series, Y_,
                     ax.scatter(X_, Y_, s=S_, lw=marker_lw, c='black', marker=marker_, zorder=zorder_, alpha=alpha_)
                     ax.plot(X_, Y_, c=line_color, linewidth=linewidth_, label=label_, zorder=zorder_,
                             linestyle=linestyle_)
+                    if y_err_arr is not None:
+                        ax.errorbar(X_, Y_, yerr=y_err_arr, color=y_err_color)
                     if filled_arr is not None:
-                        ax.fill_between(X_, Y_, filled_arr, facecolor=line_color, interpolate=True)
+                        ax.fill_between(X_, Y_, filled_arr, facecolor=line_color, interpolate=True, alpha=alpha_)
                 else:
                     trajs_ = ax.scatter(X_, Y_, s=S_, lw=marker_lw, c='black',
                                         label=label_, marker=marker_, zorder=zorder_, alpha=alpha_)
+                    if y_err_arr is not None:
+                        ax.errorbar(X_, Y_, yerr=y_err_arr, color=y_err_color)
                     trajs_.set_rasterized(rasterized_)
             elif type(c_) == str:
                 if add_line:
@@ -12447,18 +12771,29 @@ def p_plot(X_series, Y_,
                             linestyle=linestyle_)
                     trajs_ = ax.scatter(X_, Y_, s=S_, lw=marker_lw, c=c_, marker=marker_, zorder=zorder_, alpha=alpha_)
                     trajs_.set_rasterized(rasterized_)
-
+                    if y_err_arr is not None:
+                        ax.errorbar(X_, Y_, yerr=y_err_arr, color=y_err_color)
                     if filled_arr is not None:
-                        ax.fill_between(X_, Y_, filled_arr, facecolor=line_color, interpolate=True)
+                        ax.fill_between(X_, Y_, filled_arr, facecolor=line_color, interpolate=True, alpha=alpha_)
                 else:
                     trajs_ = ax.scatter(X_, Y_, s=S_, lw=marker_lw, c=c_, label=label_,
                                         marker=marker_, zorder=zorder_, alpha=alpha_)
+                    if y_err_arr is not None:
+                        ax.errorbar(X_, Y_, yerr=y_err_arr, color=y_err_color)
                     trajs_.set_rasterized(rasterized_)
+                    if add_line:
+                        ax.plot(X_, Y_, c=c_, linewidth=linewidth_, label=label_, zorder=zorder_,
+                                linestyle=linestyle_)
+
+                        if filled_arr is not None:
+                            ax.fill_between(X_, Y_, filled_arr, facecolor=c_, interpolate=True, alpha=alpha_)
             else:
                 if vmin_ is None: vmin_ = np.nanmin(c_)
                 if vmax_ is None: vmax_ = np.nanmax(c_)
                 im = ax.scatter(X_,Y_, s = S_, lw = marker_lw,  c = c_, cmap = cmap_,
                                 marker=marker_, zorder=zorder_, vmin=vmin_, vmax=vmax_)
+                if y_err_arr is not None:
+                    ax.errorbar(X_, Y_, yerr=y_err_arr, color=y_err_color)
                 im.set_rasterized(rasterized_)
                 if show_cbar:
                     if cbar_ax is None:
@@ -12631,22 +12966,39 @@ def p_plot_arr(array_v, array_x, array_y,
     if vmin_ is None: vmin_ = np.nanmin(array_v)
     if vmax_ is None: vmax_ = np.nanmax(array_v)
 
+    # make axis arrays 2D if needed
     if len(array_x.shape) == 1:
-        array_x_reshaped = np.zeros((array_v.shape[0], array_v.shape[1]), dtype=float)
-        for c_ in range(array_v.shape[1]):
-            array_x_reshaped[:, c_] = array_x
+        array_x_reshaped = np.zeros(array_v.shape, dtype=float)
+        for r_ in range(array_v.shape[0]):
+            array_x_reshaped[r_, :] = array_x
     else:
         array_x_reshaped = array_x
     array_x = array_x_reshaped
 
     if len(array_y.shape) == 1:
-        array_y_reshaped = np.zeros((array_v.shape[0], array_v.shape[1]), dtype=float)
-        for r_ in range(array_v.shape[0]):
-            array_y_reshaped[r_, :] = array_y
+        array_y_reshaped = np.zeros(array_v.shape, dtype=float)
+        for c_ in range(array_v.shape[1]):
+            array_y_reshaped[:, c_] = array_y
     else:
         array_y_reshaped = array_y
-
     array_y = array_y_reshaped
+    # if len(array_x.shape) == 1:
+    #     array_x_reshaped = np.zeros((array_v.shape[0], array_v.shape[1]), dtype=float)
+    #     for c_ in range(array_v.shape[1]):
+    #         array_x_reshaped[:, c_] = array_x
+    # else:
+    #     array_x_reshaped = array_x
+    # array_x = array_x_reshaped
+    #
+    # if len(array_y.shape) == 1:
+    #     array_y_reshaped = np.zeros((array_v.shape[0], array_v.shape[1]), dtype=float)
+    #     for r_ in range(array_v.shape[0]):
+    #         array_y_reshaped[r_, :] = array_y
+    # else:
+    #     array_y_reshaped = array_y
+    #
+    # array_y = array_y_reshaped
+
     if time_format_ is not None:
         array_x = convert_any_time_type_to_days(array_x_reshaped)
 
@@ -12794,10 +13146,20 @@ def ticks_remove_y(ax):
         except:
             plt.setp(ax.get_yticklabels(), visible=False)
 def remove_ax(ax):
-    ax.remove()
+    try:
+        shape_ = ax.shape
+        for ax_ in ax.flatten():
+            ax_.remove()
+    except:
+        try:
+            len_ = len(ax)
+            for ax_ in ax:
+                ax_.remove()
+        except:
+            ax.remove()
 def save_fig(fig, filename_, transparent=False, bbox_inches='tight', dpi=500):
     fig.savefig(filename_, transparent=transparent, bbox_inches=bbox_inches, dpi=dpi)
-def fig_adjust(fig, left=0, right=1, bottom=0, top=1, hspace=0, wspace=0):
+def fig_adjust(fig, left=.08, right=.96, bottom=.1, top=.97, hspace=.01, wspace=.01):
     fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top, hspace=hspace, wspace=wspace)
 def add_colorbar_to_ax(fig, ax, plot_image_or_scatter):
     cbar_ = fig.colorbar(plot_image_or_scatter, cax=ax)
@@ -12861,6 +13223,83 @@ def x_axis_labels_and_ticks_to_top(ax):
         except:
             ax.xaxis.tick_top()
             ax.xaxis.set_label_position("top")
+def plot_precip_cumulative_colored(time_secs, precip_rate, precip_type_NWS, time_step_secs=3600,
+                                   x_header='Time', y_header='mm', fig_ax=None, figsize_=(10,6), x_not_time=False,
+                                   time_format_=time_format, color_list=listed_cm_colors_list[1:], zorder_=5,
+                                   restart_point_list=None, custom_y_range_tuple=None, custom_x_range_tuple=None,
+                                   number_ticks_x=6, legend_loc='upper left', title_str='', legend_show=True,
+                                   labels_=('Rain', 'Freezing Rain', 'Mix', 'Snow', 'Hail or Graupel')):
+    # labels
+
+    # create type numerical array
+    if precip_type_NWS.dtype == 'O':
+        precip_type_number = parsivel_convert_NWS_code_to_numbers(precip_rate, precip_type_NWS)
+    elif precip_type_NWS.dtype == 'str':
+        precip_type_number = parsivel_convert_NWS_code_to_numbers(precip_rate, precip_type_NWS)
+    else:
+        precip_type_number = precip_type_NWS
+
+    # there are 6 types, 0-5, only precip in 1-5
+    cumulative_parameter_indx_list = [0,1,2,3,4]
+    averaging_y_array = np.zeros((time_secs.shape[0], 5), dtype=float)
+    for type_ in range(1,6):
+        temp_precip_rate = np.array(precip_rate)
+        temp_precip_rate[precip_type_number!=type_]=0
+
+        averaging_y_array[:, type_-1] = temp_precip_rate
+
+    temp_time_mean, temp_precip_mean = mean_discrete(time_secs, averaging_y_array, time_step_secs, time_secs[0],
+                                                         cumulative_parameter_indx=cumulative_parameter_indx_list)
+
+    # combine segregated into one y array
+    cumulative_y = np.nancumsum(temp_precip_mean, axis=0)
+
+    if restart_point_list is not None:
+        for restart_point in restart_point_list:
+            row_ = time_to_row_sec(temp_time_mean, restart_point)
+            cumulative_y[row_ :,:] = cumulative_y[row_ :,:] - cumulative_y[row_,:]
+            cumulative_y[row_, :] = np.nan
+
+
+
+    # create figure
+    if fig_ax is not None:
+        fig, ax = fig_ax
+    else:
+        fig, ax = plt.subplots(figsize=figsize_)
+
+    # plot
+    # # format x axis as time
+    if x_not_time:
+        ax.stackplot(temp_time_mean, cumulative_y.T, labels=labels_, colors=color_list,zorder=zorder_)
+    else:
+        ax.stackplot(time_seconds_to_days(temp_time_mean), cumulative_y.T, labels=labels_, colors=color_list,
+                     zorder=zorder_)
+        plot_format_mayor = mdates.DateFormatter(time_format_)
+        ax.xaxis.set_major_formatter(plot_format_mayor)
+
+
+    if legend_show:
+        ax.legend(loc=legend_loc)
+
+    # add axes labels
+    ax.set_xlabel(x_header)
+    ax.set_ylabel(y_header)
+
+    if custom_y_range_tuple is not None: ax.set_ylim(custom_y_range_tuple)
+    if custom_x_range_tuple is not None: ax.set_xlim(custom_x_range_tuple)
+
+    # number of x ticks
+    ax.xaxis.set_major_locator(plt.MaxNLocator(number_ticks_x))
+
+    ax.set_title(title_str)
+
+
+    plt.show()
+
+    return fig, ax
+
+
 class SelectFromCollection(object):
     """
     Select indices from a matplotlib collection using `LassoSelector`.
@@ -13349,7 +13788,8 @@ def p_plot_colored_lines(x_array, y_array, color_array, tick_labels_list, fig_ax
 def p_plot_colored_bars(x_array, y_array, color_list, color_list_unique, color_tick_labels,
                         fig_ax=None, figsize_=(10, 6),
                         x_header=None, y_header=None, figure_filename=None, time_format=time_format, cbar_show=True,
-                        custom_y_range_tuple=None, custom_x_range_tuple=None, grid_=False, cbar_ax=None):
+                        custom_y_range_tuple=None, custom_x_range_tuple=None, grid_=False, cbar_ax=None,
+                        cbar_orient='vertical', cbar_label=None):
 
     if fig_ax is not None:
         fig, ax = fig_ax
@@ -13376,19 +13816,19 @@ def p_plot_colored_bars(x_array, y_array, color_list, color_list_unique, color_t
 
     norm = matplotlib.colors.Normalize(vmin=0, vmax=len(color_list_unique))
 
-    cb2 = matplotlib.colorbar.ColorbarBase(cbar_ax,
-                                           orientation='vertical',
-                                           cmap=cmap,
-                                           norm=norm,
-                                           # extend='both',
-                                           # label='This is a label',
-                                           # ticks=color_tick_labels,
-                                           )
-    ticks_ = np.linspace(0.5, len(color_tick_labels) - 0.5, len(color_tick_labels))
-    cb2.set_ticks(ticks_)
-    cb2.set_ticklabels(color_tick_labels)
-    # cb2.set_label('Some Units')
-
+    if cbar_show:
+        cb2 = matplotlib.colorbar.ColorbarBase(cbar_ax,
+                                               orientation=cbar_orient,
+                                               cmap=cmap,
+                                               norm=norm,
+                                               # extend='both',
+                                               # label='This is a label',
+                                               # ticks=color_tick_labels,
+                                               )
+        ticks_ = np.linspace(0.5, len(color_tick_labels) - 0.5, len(color_tick_labels))
+        cb2.set_ticks(ticks_)
+        cb2.set_ticklabels(color_tick_labels)
+        cb2.set_label(cbar_label)
 
 
     # if cbar_show:
